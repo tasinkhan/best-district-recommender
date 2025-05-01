@@ -3,19 +3,18 @@ import datetime
 
 
 class RecommenderSerializer(serializers.Serializer):
-    latitude = serializers.FloatField()
-    longitude = serializers.FloatField()
-    destination = serializers.CharField(max_length=100)
-    travel_date = serializers.DateField()
+    latitude = serializers.FloatField(required=True)
+    longitude = serializers.FloatField(required=True)
+    destination = serializers.CharField(max_length=100, required=True)
+    travel_date = serializers.DateField(required=True, input_formats=["%Y-%m-%d"], format="%Y-%m-%d")
 
-    def validate(self, data):
+    def validate_travel_date(self, value):
         """
-        Validate the input data.
+        Field-level validation for travel_date:
+        ensures it’s strictly _after_ today.
         """
-        if not self.is_valid_district(data["destination"]):
-            raise serializers.ValidationError("Invalid district name.")
-
-        if data["travel_date"] < datetime.date.today():
+        today = datetime.date.today()
+        if value <= today:
+            # this attaches the error *to* 'travel_date'
             raise serializers.ValidationError("Travel date must be in the future.")
-
-        return data
+        return value
