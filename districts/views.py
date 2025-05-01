@@ -12,104 +12,114 @@ AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
 class BestDistrictsView(APIView):
     def get(self, request):
-        # Check if the data is already cached
         cached_data = cache.get("districts_data")
         if cached_data:
-            return Response(
-                {"districts": cached_data[:10]}, status=status.HTTP_200_OK
+            return Response({"districts": cached_data[:10]}, status=status.HTTP_200_OK)
+
+        district_response = requests.get(DISTRICT_URL)
+        if district_response.status_code != 200:
+            return Response({"error": "Failed to fetch district data"}, status=500)
+
+        districts_data = district_response.json()["districts"]
+        results = []
+        for district in districts_data:
+            lat, lon = district["lat"], district["long"]
+            name = district["name"]
+
+            avg_temp = self.get_average_temperature(lat, lon)
+            avg_pm = self.get_average_pm(lat, lon)
+            if avg_temp is None or avg_pm is None:
+                return Response(
+                    {"error": "Failed to fetch weather or air quality data"}, status=500
+                )
+
+            results.append(
+                {
+                    "district": name,
+                    "avg_temp_at_2pm": round(avg_temp, 2),
+                    "avg_pm25": round(avg_pm, 2),
+                }
             )
-        else:
-            # Fetch the data from the URL
-            district_response = requests.get(DISTRICT_URL)
-            results = []
-            if district_response.status_code == 200:
-                districts_data = district_response.json()["districts"]
-                for district in districts_data:
-                    # Fetch weather data for each district
-                    lat, lon = district["lat"], district["long"]
-                    name = district["name"]
 
-                    weather_response = requests.get(
-                        WEATHER_URL,
-                        params={
-                            "latitude": lat,
-                            "longitude": lon,
-                            "hourly": "temperature_2m",
-                            "timezone": "Asia/Dhaka",
-                            "current_weather": True,
-                        },
-                    )
-                    if weather_response.status_code == 200:
-                        daily_weather_chunked_data = []
-                        weather_data = weather_response.json()
-                        hourly_data = weather_data["hourly"]["temperature_2m"]
-                        for i in range(0, len(hourly_data), 24):
-                            chunk = hourly_data[i : i + 24]
-                            daily_weather_chunked_data.append(chunk)
+        results.sort(key=lambda d: (d["avg_temp_at_2pm"], d["avg_pm25"]))
+        cache.set("districts_data", results, timeout=3600)
+        return Response({"districts": results[:10]}, status=200)
 
-                        total_temperature_at_2pm = 0
-                        for day in daily_weather_chunked_data:
-                            total_temperature_at_2pm += day[14]
-                        average_temperature = round(
-                            total_temperature_at_2pm / len(daily_weather_chunked_data),
-                            2,
-                        )
+    def get_average_pm(self, lat, lon):
+        try:
+            air_quality_response = requests.get(
+                AIR_QUALITY_URL,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current_weather": True,
+                    "hourly": "pm2_5",
+                    "timezone": "Asia/Dhaka",
+                },
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching air quality data: {e}")
+            return None
+        if air_quality_response.status_code != 200:
+            print(f"Error fetching air quality data: {air_quality_response.status_code}")
+            return None
+        
+        air_quality_data = air_quality_response.json()
+        daily_aq_chunked_data = []
+        hourly_data = air_quality_data["hourly"]["pm2_5"]
+        for i in range(0, len(hourly_data), 24):
+            chunk = hourly_data[i : i + 24]
+            daily_aq_chunked_data.append(chunk)
 
-                    # Fetch air quality data for each district
-                    air_quality_response = requests.get(
-                        AIR_QUALITY_URL,
-                        params={
-                            "latitude": district["lat"],
-                            "longitude": district["long"],
-                            "current_weather": True,
-                            "hourly": "pm2_5",
-                            "timezone": "Asia/Dhaka",
-                        },
-                    )
-                    if air_quality_response.status_code == 200:
-                        air_quality_data = air_quality_response.json()
-                        daily_aq_chunked_data = []
-                        hourly_data = air_quality_data["hourly"]["pm2_5"]
-                        for i in range(0, len(hourly_data), 24):
-                            chunk = hourly_data[i : i + 24]
-                            daily_aq_chunked_data.append(chunk)
+        total_pm_at_2pm = 0
+        for day in daily_aq_chunked_data:
+            total_pm_at_2pm += day[14]
+        average_pm = round(total_pm_at_2pm / len(daily_aq_chunked_data), 2)
 
-                        total_pm_at_2pm = 0
-                        for day in daily_aq_chunked_data:
-                            total_pm_at_2pm += day[14]
-                        average_pm = round(
-                            total_pm_at_2pm / len(daily_aq_chunked_data), 2
-                        )
-                        district["air_quality"] = {
-                            "7_days_average_pm2_5_at_2pm": total_pm_at_2pm,
-                        }
-                        results.append(
-                            {
-                                "district": name,
-                                "avg_temp_at_2pm": round(average_temperature, 2),
-                                "avg_pm25": round(average_pm, 2),
-                            }
-                        )
-                    sorted_results = sorted(
-                        results,
-                        key=lambda result: (
-                            result["avg_temp_at_2pm"],
-                            result["avg_pm25"],
-                        ),
-                    )
-                cache.set(
-                    "districts_data",
-                    sorted_results,
-                    timeout=60 * 60,  # Cache for 1 hour
-                )
-                # Return the top 10 districts based on the criteria
-                return Response(
-                    {"districts": sorted_results[:10]},
-                    status=status.HTTP_200_OK,
-                )
+        return average_pm
 
-            else:
-                return Response(
-                    {"error": "Failed to fetch district data"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+    def get_average_temperature(self, lat, lon):
+        try:
+            weather_response = requests.get(
+                WEATHER_URL,
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "hourly": "temperature_2m",
+                    "timezone": "Asia/Dhaka",
+                    "current_weather": True,
+                },
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching weather data: {e}")
+            return None
+        if weather_response.status_code != 200:
+            print(f"Error fetching weather data: {weather_response.status_code}")
+            return None
+        weather_response = requests.get(
+            WEATHER_URL,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "hourly": "temperature_2m",
+                "timezone": "Asia/Dhaka",
+                "current_weather": True,
+            },
+        )
+        if weather_response.status_code == 200:
+            daily_weather_chunked_data = []
+            weather_data = weather_response.json()
+            hourly_data = weather_data["hourly"]["temperature_2m"]
+            for i in range(0, len(hourly_data), 24):
+                chunk = hourly_data[i : i + 24]
+                daily_weather_chunked_data.append(chunk)
+
+            total_temperature_at_2pm = 0
+            for day in daily_weather_chunked_data:
+                total_temperature_at_2pm += day[14]
+            average_temperature = round(
+                total_temperature_at_2pm / len(daily_weather_chunked_data),
+                2,
+            )
+
+        return average_temperature
