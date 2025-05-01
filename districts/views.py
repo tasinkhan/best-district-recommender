@@ -15,15 +15,19 @@ class BestDistrictsView(APIView):
         # Check if the data is already cached
         cached_data = cache.get("districts_data")
         if cached_data:
-            districts_data = cached_data
+            return Response(
+                {"districts": cached_data[:10]}, status=status.HTTP_200_OK
+            )
         else:
             # Fetch the data from the URL
-            response = requests.get(DISTRICT_URL)
-            if response.status_code == 200:
-                districts_data = response.json()["districts"]
+            district_response = requests.get(DISTRICT_URL)
+            results = []
+            if district_response.status_code == 200:
+                districts_data = district_response.json()["districts"]
                 for district in districts_data:
                     # Fetch weather data for each district
                     lat, lon = district["lat"], district["long"]
+                    name = district["name"]
 
                     weather_response = requests.get(
                         WEATHER_URL,
@@ -36,25 +40,71 @@ class BestDistrictsView(APIView):
                         },
                     )
                     if weather_response.status_code == 200:
-                        daily_chunked_data = []
+                        daily_weather_chunked_data = []
                         weather_data = weather_response.json()
                         hourly_data = weather_data["hourly"]["temperature_2m"]
                         for i in range(0, len(hourly_data), 24):
                             chunk = hourly_data[i : i + 24]
-                            daily_chunked_data.append(chunk)
+                            daily_weather_chunked_data.append(chunk)
 
                         total_temperature_at_2pm = 0
-                        for day in daily_chunked_data:
+                        for day in daily_weather_chunked_data:
                             total_temperature_at_2pm += day[14]
-                        average_temperature = round(total_temperature_at_2pm / len(daily_chunked_data), 2)
-                        district["weather"] = {
-                            "7_days_average_temperature_at_2pm": average_temperature,
-                            "current_weather": weather_data["current_weather"],
+                        average_temperature = round(
+                            total_temperature_at_2pm / len(daily_weather_chunked_data),
+                            2,
+                        )
+
+                    # Fetch air quality data for each district
+                    air_quality_response = requests.get(
+                        AIR_QUALITY_URL,
+                        params={
+                            "latitude": district["lat"],
+                            "longitude": district["long"],
+                            "current_weather": True,
+                            "hourly": "pm2_5",
+                            "timezone": "Asia/Dhaka",
+                        },
+                    )
+                    if air_quality_response.status_code == 200:
+                        air_quality_data = air_quality_response.json()
+                        daily_aq_chunked_data = []
+                        hourly_data = air_quality_data["hourly"]["pm2_5"]
+                        for i in range(0, len(hourly_data), 24):
+                            chunk = hourly_data[i : i + 24]
+                            daily_aq_chunked_data.append(chunk)
+
+                        total_pm_at_2pm = 0
+                        for day in daily_aq_chunked_data:
+                            total_pm_at_2pm += day[14]
+                        average_pm = round(
+                            total_pm_at_2pm / len(daily_aq_chunked_data), 2
+                        )
+                        district["air_quality"] = {
+                            "7_days_average_pm2_5_at_2pm": total_pm_at_2pm,
                         }
-                    else:
-                        district["weather"] = {}
+                        results.append(
+                            {
+                                "district": name,
+                                "avg_temp_at_2pm": round(average_temperature, 2),
+                                "avg_pm25": round(average_pm, 2),
+                            }
+                        )
+                    sorted_results = sorted(
+                        results,
+                        key=lambda result: (
+                            result["avg_temp_at_2pm"],
+                            result["avg_pm25"],
+                        ),
+                    )
+                cache.set(
+                    "districts_data",
+                    sorted_results,
+                    timeout=60 * 60,  # Cache for 1 hour
+                )
+                # Return the top 10 districts based on the criteria
                 return Response(
-                    {"districts": districts_data},
+                    {"districts": sorted_results[:10]},
                     status=status.HTTP_200_OK,
                 )
 
