@@ -20,7 +20,7 @@ services:
   celery:
     build: .
     container_name: celery_worker
-    command: celery -A district_recommender worker --loglevel=info
+    command: celery -A district_recommender worker --loglevel=info --concurrency=1
     volumes:
       - .:/app
     depends_on:
@@ -32,7 +32,7 @@ services:
   beat:
     build: .
     container_name: celery_beat
-    command: celery -A district_recommender beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler --concurrency=1
+    command: celery -A district_recommender beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/app
     depends_on:

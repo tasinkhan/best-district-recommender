@@ -31,7 +31,7 @@ def update_best_districts_cache():
             )
 
         results.sort(key=lambda d: (d["avg_temp_at_2pm"], d["avg_pm25"]))
-        cache.set("districts_data", results, timeout=3600)
+        cache.set("best_districts", results, timeout=3600)
         print("✅ Cached top districts updated.")
     except Exception as e:
         print(f"❌ Failed to update cache: {e}")
