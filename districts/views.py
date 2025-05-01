@@ -96,30 +96,20 @@ class BestDistrictsView(APIView):
         if weather_response.status_code != 200:
             print(f"Error fetching weather data: {weather_response.status_code}")
             return None
-        weather_response = requests.get(
-            WEATHER_URL,
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "hourly": "temperature_2m",
-                "timezone": "Asia/Dhaka",
-                "current_weather": True,
-            },
-        )
-        if weather_response.status_code == 200:
-            daily_weather_chunked_data = []
-            weather_data = weather_response.json()
-            hourly_data = weather_data["hourly"]["temperature_2m"]
-            for i in range(0, len(hourly_data), 24):
-                chunk = hourly_data[i : i + 24]
-                daily_weather_chunked_data.append(chunk)
+        
+        daily_weather_chunked_data = []
+        weather_data = weather_response.json()
+        hourly_data = weather_data["hourly"]["temperature_2m"]
+        for i in range(0, len(hourly_data), 24):
+            chunk = hourly_data[i : i + 24]
+            daily_weather_chunked_data.append(chunk)
 
-            total_temperature_at_2pm = 0
-            for day in daily_weather_chunked_data:
-                total_temperature_at_2pm += day[14]
-            average_temperature = round(
-                total_temperature_at_2pm / len(daily_weather_chunked_data),
-                2,
-            )
+        total_temperature_at_2pm = 0
+        for day in daily_weather_chunked_data:
+            total_temperature_at_2pm += day[14]
+        average_temperature = round(
+            total_temperature_at_2pm / len(daily_weather_chunked_data),
+            2,
+        )
 
         return average_temperature
