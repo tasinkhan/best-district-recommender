@@ -13,6 +13,7 @@ AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 class BestDistrictsView(APIView):
     def get(self, request):
         cached_data = cache.get("districts_data")
+        print("🐍 File: districts/views.py | Line: 16 | get ~ cached_data",cached_data)
         if cached_data:
             return Response({"districts": cached_data[:10]}, status=status.HTTP_200_OK)
 
