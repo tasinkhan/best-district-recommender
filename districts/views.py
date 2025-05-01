@@ -1,9 +1,13 @@
+import httpx
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.core.cache import cache
 from datetime import datetime
+from .serializers import RecommenderSerializer
+from .utils import fetch_weather_and_air
+from asyncio import gather
 
 DISTRICT_URL = "https://raw.githubusercontent.com/strativ-dev/technical-screening-test/main/bd-districts.json"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
@@ -13,17 +17,13 @@ AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 class BestDistrictsView(APIView):
     def get(self, request):
         best_districts_cached_data = cache.get("best_districts")
-        print(
-            "🐍 File: districts/views.py | Line: 16 | get ~ best_districts_cached_data",
-            best_districts_cached_data,
-        )
         if best_districts_cached_data:
             return Response(
                 {"districts": best_districts_cached_data[:10]},
                 status=status.HTTP_200_OK,
             )
 
-        districts_data = self.get_district_data()
+        districts_data = get_district_data()
         if not districts_data:
             return Response({"error": "Failed to fetch district data"}, status=500)
         results = []
@@ -80,7 +80,9 @@ class BestDistrictsView(APIView):
 
         total_pm_at_2pm = 0
         for day in daily_aq_chunked_data:
-            total_pm_at_2pm += day[14]
+            value = day[14]
+            if value is not None:
+                total_pm_at_2pm += value
         average_pm = round(total_pm_at_2pm / len(daily_aq_chunked_data), 2)
 
         return average_pm
@@ -121,19 +123,91 @@ class BestDistrictsView(APIView):
 
         return average_temperature
 
-    def get_district_data(self):
+
+def get_district_data():
+    district_data = cache.get("district_data")
+    if district_data:
+        return district_data
+    else:
+        try:
+            response = requests.get(DISTRICT_URL, timeout=1000)
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching district data: {e}")
+            return None
+        if response.status_code != 200:
+            print(f"Error fetching district data: {response.status_code}")
+            return None
+        district_data = response.json()["districts"]
+        cache.set("district_data", district_data, timeout=3600)
+        return district_data
+
+
+class TravelRecommenderView(APIView):
+
+    def get(self, request):
+        serializer = RecommenderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        current_location_lat = data["latitude"]
+        current_location_lon = data["longitude"]
+        date = data["travel_date"]
+        destination = data["destination"]
+
         district_data = cache.get("district_data")
-        if district_data:
-            return district_data
+        if not district_data:
+            district_data = get_district_data()
+            if not district_data:
+                return Response({"error": "Failed to fetch district data"}, status=500)
+
+        for district in district_data:
+            if district["name"] == destination:
+                destination_location_lat = district["lat"]
+                destination_location_lon = district["long"]
+                break
         else:
-            try:
-                response = requests.get(DISTRICT_URL, timeout=1000)
-            except requests.exceptions.RequestException as e:
-                print(f"Error fetching district data: {e}")
-                return None
-            if response.status_code != 200:
-                print(f"Error fetching district data: {response.status_code}")
-                return None
-            district_data = response.json()["districts"]
-            cache.set("district_data", district_data, timeout=3600)
-            return district_data
+            return Response({"error": "Invalid destination"}, status=400)
+
+        current_location_temp, current_location_pm = fetch_weather_and_air(
+            current_location_lat, current_location_lon, date
+        )
+        if current_location_temp is None or current_location_pm is None:
+            return Response(
+                {"error": "Failed to fetch weather or air quality data"}, status=500
+            )
+        destination_location_temp, destination_location_pm = fetch_weather_and_air(
+            destination_location_lat, destination_location_lon, date
+        )
+        if destination_location_temp is None or destination_location_pm is None:
+            return Response(
+                {"error": "Failed to fetch weather or air quality data"}, status=500
+            )
+        temperature_difference = round(
+            (current_location_temp - destination_location_temp), 2
+        )
+        if (
+            current_location_temp < destination_location_temp
+            and current_location_pm < destination_location_pm
+        ):
+            return Response(
+                {
+                    "message": f"Your {destination} is hotter and has worse air quality than your current location. It’s better to stay where you are."
+                },
+                status=200,
+            )
+        elif (
+            current_location_temp > destination_location_temp
+            and current_location_pm > destination_location_pm
+        ):
+            return Response(
+                {
+                    "message": f"Your destination is {temperature_difference}°C cooler and has significantly better air quality. Enjoy your trip!"
+                },
+                status=200,
+            )
+        else:
+            return Response(
+                {
+                    "message": "Both locations have similar weather and air quality. Enjoy your trip!"
+                },
+                status=200,
+            )
