@@ -65,7 +65,9 @@ def get_average_pm(lat, lon):
 
     total_pm_at_2pm = 0
     for day in daily_aq_chunked_data:
-        total_pm_at_2pm += day[14]
+        value = day[14]
+        if value is not None:
+            total_pm_at_2pm += value
     average_pm = round(total_pm_at_2pm / len(daily_aq_chunked_data), 2)
 
     return average_pm
