@@ -12,16 +12,20 @@ AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
 class BestDistrictsView(APIView):
     def get(self, request):
-        cached_data = cache.get("districts_data")
-        print("🐍 File: districts/views.py | Line: 16 | get ~ cached_data",cached_data)
-        if cached_data:
-            return Response({"districts": cached_data[:10]}, status=status.HTTP_200_OK)
+        best_districts_cached_data = cache.get("best_districts")
+        print(
+            "🐍 File: districts/views.py | Line: 16 | get ~ best_districts_cached_data",
+            best_districts_cached_data,
+        )
+        if best_districts_cached_data:
+            return Response(
+                {"districts": best_districts_cached_data[:10]},
+                status=status.HTTP_200_OK,
+            )
 
-        district_response = requests.get(DISTRICT_URL, timeout=1000)
-        if district_response.status_code != 200:
+        districts_data = self.get_district_data()
+        if not districts_data:
             return Response({"error": "Failed to fetch district data"}, status=500)
-
-        districts_data = district_response.json()["districts"]
         results = []
         for district in districts_data:
             lat, lon = district["lat"], district["long"]
@@ -43,7 +47,7 @@ class BestDistrictsView(APIView):
             )
 
         results.sort(key=lambda d: (d["avg_temp_at_2pm"], d["avg_pm25"]))
-        cache.set("districts_data", results, timeout=3600)
+        cache.set("best_districts", results, timeout=3600)
         return Response({"districts": results[:10]}, status=200)
 
     def get_average_pm(self, lat, lon):
@@ -62,9 +66,11 @@ class BestDistrictsView(APIView):
             print(f"Error fetching air quality data: {e}")
             return None
         if air_quality_response.status_code != 200:
-            print(f"Error fetching air quality data: {air_quality_response.status_code}")
+            print(
+                f"Error fetching air quality data: {air_quality_response.status_code}"
+            )
             return None
-        
+
         air_quality_data = air_quality_response.json()
         daily_aq_chunked_data = []
         hourly_data = air_quality_data["hourly"]["pm2_5"]
@@ -97,7 +103,7 @@ class BestDistrictsView(APIView):
         if weather_response.status_code != 200:
             print(f"Error fetching weather data: {weather_response.status_code}")
             return None
-        
+
         daily_weather_chunked_data = []
         weather_data = weather_response.json()
         hourly_data = weather_data["hourly"]["temperature_2m"]
@@ -114,3 +120,20 @@ class BestDistrictsView(APIView):
         )
 
         return average_temperature
+
+    def get_district_data(self):
+        district_data = cache.get("district_data")
+        if district_data:
+            return district_data
+        else:
+            try:
+                response = requests.get(DISTRICT_URL, timeout=1000)
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching district data: {e}")
+                return None
+            if response.status_code != 200:
+                print(f"Error fetching district data: {response.status_code}")
+                return None
+            district_data = response.json()["districts"]
+            cache.set("district_data", district_data, timeout=3600)
+            return district_data
