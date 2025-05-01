@@ -17,7 +17,7 @@ class BestDistrictsView(APIView):
         if cached_data:
             return Response({"districts": cached_data[:10]}, status=status.HTTP_200_OK)
 
-        district_response = requests.get(DISTRICT_URL)
+        district_response = requests.get(DISTRICT_URL, timeout=1000)
         if district_response.status_code != 200:
             return Response({"error": "Failed to fetch district data"}, status=500)
 
