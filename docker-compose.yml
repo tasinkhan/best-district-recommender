@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    container_name: django_app
+    command: >
+      bash -c "python manage.py migrate && python manage.py collectstatic --noinput && 
+      gunicorn district_recommender.wsgi:application --bind 0.0.0.0:8000 --timeout 60"
+    volumes:
+      - .:/app
+      - static_volume:/app/static
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
+  celery:
+    build: .
+    container_name: celery_worker
+    command: celery -A district_recommender worker --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - web
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
+  beat:
+    build: .
+    container_name: celery_beat
+    command: celery -A district_recommender beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler --concurrency=1
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - web
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  static_volume:
